@@ -1,0 +1,6 @@
+{
+  "name": "모션 사이언스 퀴즈 - 중학교 과학 손가락 제스처 퀴즈",
+  "description": "MediaPipe AI 손가락 인식(1~4번 제스처 1.5초 유지)과 마우스 클릭으로 푸는 중학교 과학 4지선다 10문제 웹앱. 온디바이스 처리로 안전하게 학습합니다.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
