@@ -199,8 +199,8 @@ export const QuizCard: React.FC<QuizCardProps> = ({
 
             {/* Advance to Next Question Button */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2">
-              <span className="text-xs text-slate-400 dark:text-slate-500">
-                ✋ 카메라에 손바닥을 1.2초 펴거나 버튼을 누르세요
+              <span className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                <span>💨 손을 옆으로 휙 넘기거나 (스와이프) 👍 엄지척 또는 버튼 클릭</span>
               </span>
 
               <button

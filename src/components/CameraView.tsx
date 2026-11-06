@@ -1,8 +1,13 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
-import { analyzeHandPose, HAND_CONNECTIONS, LandmarkPoint } from '../utils/fingerDetector';
-import { playTickSound, playSelectLockSound } from '../utils/audio';
-import { Camera, CameraOff, RefreshCw, ShieldCheck, AlertCircle, Sparkles, MousePointer } from 'lucide-react';
+import {
+  analyzeHandPose,
+  HAND_CONNECTIONS,
+  LandmarkPoint,
+  FingerCountStabilizer,
+} from '../utils/fingerDetector';
+import { playTickSound, playSelectLockSound, playSwipeSound } from '../utils/audio';
+import { Camera, CameraOff, RefreshCw, ShieldCheck, AlertCircle, MousePointer, Sparkles, MoveRight, ThumbsUp } from 'lucide-react';
 
 interface CameraViewProps {
   onChoiceDetected: (choice: 1 | 2 | 3 | 4 | null, progress: number) => void;
@@ -17,7 +22,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
   onChoiceConfirmed,
   isQuestionAnswered,
   onSwitchToMouse,
-  onAdvanceNext
+  onAdvanceNext,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,18 +33,36 @@ export const CameraView: React.FC<CameraViewProps> = ({
   const [modelLoadProgress, setModelLoadProgress] = useState<string>('AI 모델 엔진 초기화 중...');
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  
-  // Gesture tracking state
+
+  // Gesture tracking & stabilization state
+  const stabilizerRef = useRef<FingerCountStabilizer>(new FingerCountStabilizer(8));
   const holdStartTimeRef = useRef<number | null>(null);
   const currentCountRef = useRef<number | null>(null);
   const lastSoundTickRef = useRef<number>(0);
   const isQuestionAnsweredRef = useRef(isQuestionAnswered);
   isQuestionAnsweredRef.current = isQuestionAnswered;
 
+  // Motion Swipe & Quick Gesture Tracker
+  const motionTrailRef = useRef<{ x: number; y: number; time: number }[]>([]);
+  const lastAdvanceTimeRef = useRef<number>(0);
+  const [motionNotice, setMotionNotice] = useState<string | null>(null);
+
   const [detectedFingerCount, setDetectedFingerCount] = useState<number>(0);
   const [isHandVisible, setIsHandVisible] = useState<boolean>(false);
   const [gestureProgress, setGestureProgress] = useState<number>(0);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
+  const [handInfo, setHandInfo] = useState<{ side: 'left' | 'right'; angle: number } | null>(null);
+
+  // Reset tracking when question changes to unanswered
+  useEffect(() => {
+    if (!isQuestionAnswered) {
+      holdStartTimeRef.current = null;
+      currentCountRef.current = null;
+      stabilizerRef.current.reset();
+      setGestureProgress(0);
+      onChoiceDetected(null, 0);
+    }
+  }, [isQuestionAnswered, onChoiceDetected]);
 
   // Initialize MediaPipe Vision Tasks HandLandmarker
   useEffect(() => {
@@ -59,30 +82,30 @@ export const CameraView: React.FC<CameraViewProps> = ({
 
         let landmarker: HandLandmarker | null = null;
         try {
-          // Attempt GPU delegate first for smooth 60fps
           landmarker = await HandLandmarker.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
               delegate: 'GPU',
             },
             runningMode: 'VIDEO',
             numHands: 1,
-            minHandDetectionConfidence: 0.6,
-            minHandPresenceConfidence: 0.6,
-            minTrackingConfidence: 0.6,
+            minHandDetectionConfidence: 0.65,
+            minHandPresenceConfidence: 0.65,
+            minTrackingConfidence: 0.65,
           });
         } catch {
-          // Fallback to CPU if GPU delegate is restricted in browser
           landmarker = await HandLandmarker.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
               delegate: 'CPU',
             },
             runningMode: 'VIDEO',
             numHands: 1,
-            minHandDetectionConfidence: 0.6,
-            minHandPresenceConfidence: 0.6,
-            minTrackingConfidence: 0.6,
+            minHandDetectionConfidence: 0.65,
+            minHandPresenceConfidence: 0.65,
+            minTrackingConfidence: 0.65,
           });
         }
 
@@ -117,7 +140,6 @@ export const CameraView: React.FC<CameraViewProps> = ({
         throw new Error('이 브라우저는 카메라 스트림을 지원하지 않습니다.');
       }
 
-      // Stop previous stream if running
       if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach((track) => track.stop());
@@ -135,11 +157,14 @@ export const CameraView: React.FC<CameraViewProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().then(() => {
-            setCameraActive(true);
-          }).catch((e) => {
-            console.error('Video play error:', e);
-          });
+          videoRef.current
+            ?.play()
+            .then(() => {
+              setCameraActive(true);
+            })
+            .catch((e) => {
+              console.error('Video play error:', e);
+            });
         };
       }
     } catch (err: unknown) {
@@ -166,6 +191,9 @@ export const CameraView: React.FC<CameraViewProps> = ({
     setIsHandVisible(false);
     setDetectedFingerCount(0);
     setGestureProgress(0);
+    stabilizerRef.current.reset();
+    holdStartTimeRef.current = null;
+    currentCountRef.current = null;
     onChoiceDetected(null, 0);
   }, [onChoiceDetected]);
 
@@ -208,17 +236,37 @@ export const CameraView: React.FC<CameraViewProps> = ({
               const landmarks = detections.landmarks[0] as LandmarkPoint[];
               setIsHandVisible(true);
 
+              // 1. Rotation-invariant, left/right & thumb aware analysis
               const analysis = analyzeHandPose(landmarks);
-              const count = analysis ? analysis.fingerCount : 0;
-              setDetectedFingerCount(count);
+              const rawCount = analysis ? analysis.fingerCount : 0;
 
-              // Draw skeleton overlay (Mirrored for natural selfie view)
+              // Record palm movement trail for dynamic motion gestures (Swipe)
+              const palm = analysis ? analysis.palmCenter : { x: landmarks[0].x, y: landmarks[0].y };
+              const nowMs = performance.now();
+              motionTrailRef.current.push({ x: palm.x, y: palm.y, time: nowMs });
+              if (motionTrailRef.current.length > 20) {
+                motionTrailRef.current.shift();
+              }
+              // Retain only points within last 400ms
+              motionTrailRef.current = motionTrailRef.current.filter((p) => nowMs - p.time <= 400);
+              
+              // 2. Temporal stabilization filter across recent frames
+              const stabilizedCount = stabilizerRef.current.addSample(rawCount);
+              setDetectedFingerCount(stabilizedCount);
+
+              if (analysis) {
+                setHandInfo({
+                  side: analysis.handednessEstimated,
+                  angle: Math.round(analysis.handAngleDeg),
+                });
+              }
+
+              // 3. Draw skeleton overlay (Mirrored for natural selfie view)
               ctx.save();
-              // Mirror coordinate system horizontally for canvas rendering
               ctx.translate(canvas.width, 0);
               ctx.scale(-1, 1);
 
-              // 1. Draw connections
+              // Draw connections
               ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)'; // Emerald line
               ctx.lineWidth = 3.5;
               ctx.lineCap = 'round';
@@ -235,92 +283,177 @@ export const CameraView: React.FC<CameraViewProps> = ({
                 }
               }
 
-              // 2. Draw landmarks
+              // Draw landmarks
               landmarks.forEach((p, idx) => {
                 const isTip = [4, 8, 12, 16, 20].includes(idx);
                 ctx.beginPath();
                 ctx.arc(p.x * canvas.width, p.y * canvas.height, isTip ? 6.5 : 4, 0, 2 * Math.PI);
 
                 if (isTip) {
-                  ctx.fillStyle = '#06B6D4'; // Cyan tip
+                  // Active extended fingertips glow cyan
+                  let isThisFingerExtended = false;
+                  if (analysis) {
+                    if (idx === 4) isThisFingerExtended = analysis.isThumb;
+                    if (idx === 8) isThisFingerExtended = analysis.isIndex;
+                    if (idx === 12) isThisFingerExtended = analysis.isMiddle;
+                    if (idx === 16) isThisFingerExtended = analysis.isRing;
+                    if (idx === 20) isThisFingerExtended = analysis.isPinky;
+                  }
+
+                  ctx.fillStyle = isThisFingerExtended ? '#06B6D4' : '#64748B';
                   ctx.strokeStyle = '#FFFFFF';
                   ctx.lineWidth = 2;
                   ctx.fill();
                   ctx.stroke();
                 } else {
-                  ctx.fillStyle = '#10B981'; // Emerald joint
+                  ctx.fillStyle = '#10B981';
                   ctx.fill();
                 }
               });
 
               ctx.restore();
 
-              // Gesture Confirmation Logic (1.5 seconds hold)
-              const isValidChoice = count >= 1 && count <= 4;
-              const now = Date.now();
+              // 4. Gesture Confirmation Logic
+              if (!isQuestionAnsweredRef.current) {
+                // CHOOSING OPTIONS (1~4): 1.5s Hold
+                const isValidChoice = stabilizedCount >= 1 && stabilizedCount <= 4;
+                const now = Date.now();
 
-              if (isValidChoice && !isQuestionAnsweredRef.current) {
-                const choiceNum = count as 1 | 2 | 3 | 4;
+                if (isValidChoice) {
+                  const choiceNum = stabilizedCount as 1 | 2 | 3 | 4;
 
-                if (currentCountRef.current === choiceNum) {
-                  const elapsed = now - (holdStartTimeRef.current || now);
-                  const progress = Math.min(1, elapsed / 1500);
-                  setGestureProgress(progress);
-                  onChoiceDetected(choiceNum, progress);
+                  if (currentCountRef.current === choiceNum) {
+                    const elapsed = now - (holdStartTimeRef.current || now);
+                    const progress = Math.min(1, elapsed / 1500);
+                    setGestureProgress(progress);
+                    onChoiceDetected(choiceNum, progress);
 
-                  // Subtle audio tick during hold
-                  if (now - lastSoundTickRef.current > 300 && progress > 0.1 && progress < 0.95) {
-                    playTickSound(progress);
-                    lastSoundTickRef.current = now;
-                  }
+                    // Sound tick on progress
+                    if (now - lastSoundTickRef.current > 300 && progress > 0.1 && progress < 0.95) {
+                      playTickSound(progress);
+                      lastSoundTickRef.current = now;
+                    }
 
-                  // 1.5s completed -> Lock in the answer!
-                  if (progress >= 1) {
-                    playSelectLockSound();
-                    onChoiceConfirmed(choiceNum);
-                    // Reset hold state
-                    holdStartTimeRef.current = null;
-                    currentCountRef.current = null;
+                    // 1.5 seconds reached -> Confirm selection!
+                    if (progress >= 1) {
+                      playSelectLockSound();
+                      onChoiceConfirmed(choiceNum);
+
+                      // Immediately reset hold state
+                      holdStartTimeRef.current = null;
+                      currentCountRef.current = null;
+                      stabilizerRef.current.reset();
+                      setGestureProgress(0);
+                      onChoiceDetected(null, 0);
+                    }
+                  } else {
+                    // Finger count changed: reset 1.5s countdown timer to zero
+                    currentCountRef.current = choiceNum;
+                    holdStartTimeRef.current = now;
                     setGestureProgress(0);
-                    onChoiceDetected(null, 0);
+                    onChoiceDetected(choiceNum, 0);
                   }
                 } else {
-                  // Switch to new finger count
-                  currentCountRef.current = choiceNum;
-                  holdStartTimeRef.current = now;
+                  // Stabilized count is 0, 5, or invalid -> reset timer
+                  currentCountRef.current = null;
+                  holdStartTimeRef.current = null;
                   setGestureProgress(0);
-                  onChoiceDetected(choiceNum, 0);
-                }
-              } else if (isQuestionAnsweredRef.current && count === 5 && onAdvanceNext) {
-                // If question is answered and user shows 5 open fingers for 1.5s, advance to next question!
-                if (currentCountRef.current === 5) {
-                  const elapsed = now - (holdStartTimeRef.current || now);
-                  const progress = Math.min(1, elapsed / 1200);
-                  setGestureProgress(progress);
-                  if (progress >= 1) {
-                    playSelectLockSound();
-                    onAdvanceNext();
-                    holdStartTimeRef.current = null;
-                    currentCountRef.current = null;
-                    setGestureProgress(0);
-                  }
-                } else {
-                  currentCountRef.current = 5;
-                  holdStartTimeRef.current = now;
+                  onChoiceDetected(null, 0);
                 }
               } else {
-                // Not a valid 1-4 choice or hand lost
+                // QUESTION IS ANSWERED: Choice selection is locked!
                 currentCountRef.current = null;
                 holdStartTimeRef.current = null;
                 setGestureProgress(0);
                 onChoiceDetected(null, 0);
+
+                if (onAdvanceNext) {
+                  const now = Date.now();
+                  const canAdvance = now - lastAdvanceTimeRef.current > 1000;
+
+                  if (canAdvance) {
+                    // [모션 1] 손 휙 넘기기 (Swipe Motion)
+                    const trail = motionTrailRef.current;
+                    if (trail.length >= 4) {
+                      const pCurrent = trail[trail.length - 1];
+                      const pOld = trail[0];
+                      const dt = (pCurrent.time - pOld.time) / 1000;
+                      const dx = pCurrent.x - pOld.x;
+                      const dy = pCurrent.y - pOld.y;
+                      const absDx = Math.abs(dx);
+                      const absDy = Math.abs(dy);
+
+                      // 빠른 수평 스와이프 감지 (화면 너비의 14% 이상을 0.08~0.38초 사이에 이동)
+                      if (dt >= 0.08 && dt <= 0.38 && absDx > 0.14 && absDx > absDy * 1.15) {
+                        lastAdvanceTimeRef.current = now;
+                        playSwipeSound();
+                        setMotionNotice('스와이프 모션 감지! 다음 문제로 이동 💨');
+                        setTimeout(() => setMotionNotice(null), 1200);
+                        onAdvanceNext();
+                        motionTrailRef.current = [];
+                        return;
+                      }
+                    }
+
+                    // [모션 2] 엄지 척 (Thumbs-Up 👍) 제스처
+                    const isThumbsUp =
+                      analysis &&
+                      analysis.isThumb &&
+                      !analysis.isIndex &&
+                      !analysis.isMiddle &&
+                      !analysis.isRing &&
+                      !analysis.isPinky &&
+                      Math.abs(analysis.handAngleDeg) < 45;
+
+                    if (isThumbsUp) {
+                      if (currentCountRef.current === 999) {
+                        const elapsed = now - (holdStartTimeRef.current || now);
+                        if (elapsed >= 300) {
+                          lastAdvanceTimeRef.current = now;
+                          playSwipeSound();
+                          setMotionNotice('엄지 척 👍 감지! 다음 문제로 이동');
+                          setTimeout(() => setMotionNotice(null), 1200);
+                          onAdvanceNext();
+                          holdStartTimeRef.current = null;
+                          currentCountRef.current = null;
+                          return;
+                        }
+                      } else {
+                        currentCountRef.current = 999;
+                        holdStartTimeRef.current = now;
+                      }
+                    }
+
+                    // [모션 3] 빠른 손 흔들기/손바닥 펴기 (0.35초)
+                    if (stabilizedCount === 5 || rawCount === 5) {
+                      if (currentCountRef.current === 555) {
+                        const elapsed = now - (holdStartTimeRef.current || now);
+                        if (elapsed >= 350) {
+                          lastAdvanceTimeRef.current = now;
+                          playSwipeSound();
+                          setMotionNotice('손 흔들기 🖐️ 감지! 다음 문제로 이동');
+                          setTimeout(() => setMotionNotice(null), 1200);
+                          onAdvanceNext();
+                          holdStartTimeRef.current = null;
+                          currentCountRef.current = null;
+                          return;
+                        }
+                      } else {
+                        currentCountRef.current = 555;
+                        holdStartTimeRef.current = now;
+                      }
+                    }
+                  }
+                }
               }
             } else {
-              // No hand detected in frame
+              // 5. REQUIREMENT: 손이 화면에서 사라지면 타이머를 즉시 초기화
               setIsHandVisible(false);
               setDetectedFingerCount(0);
+              setHandInfo(null);
               currentCountRef.current = null;
               holdStartTimeRef.current = null;
+              stabilizerRef.current.reset();
               setGestureProgress(0);
               onChoiceDetected(null, 0);
             }
@@ -376,7 +509,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
             </div>
             <h4 className="text-base font-semibold text-slate-100 mb-1">카메라 연결 안내</h4>
             <p className="text-xs text-slate-300 max-w-xs mb-4 leading-relaxed">{cameraError}</p>
-            
+
             <div className="flex flex-col sm:flex-row items-center gap-2">
               <button
                 onClick={startCamera}
@@ -402,8 +535,16 @@ export const CameraView: React.FC<CameraViewProps> = ({
             {/* Top Status Bar */}
             <div className="absolute top-3 inset-x-3 flex items-center justify-between text-xs font-medium text-white pointer-events-none">
               <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-black/60 backdrop-blur-md">
-                <span className={`w-2 h-2 rounded-full ${isHandVisible ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'}`} />
-                <span>{isHandVisible ? '손 인식 활성' : '카메라 앞에 손을 올려주세요'}</span>
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isHandVisible ? 'bg-emerald-400 animate-pulse' : 'bg-slate-400'
+                  }`}
+                />
+                <span>
+                  {isHandVisible
+                    ? `손 감지됨 (${handInfo?.side === 'right' ? '오른손' : '왼손'})`
+                    : '카메라 앞에 손을 올려주세요'}
+                </span>
               </div>
 
               {detectedFingerCount > 0 && (
@@ -453,12 +594,23 @@ export const CameraView: React.FC<CameraViewProps> = ({
               </div>
             )}
 
-            {/* Answered State Tip */}
+            {/* Answered State Tip: Dynamic Motion Hint */}
             {isQuestionAnswered && (
               <div className="absolute bottom-3 inset-x-3 text-center pointer-events-none">
-                <span className="inline-block text-[11px] px-3 py-1 rounded-md bg-black/75 text-emerald-300 backdrop-blur-md border border-emerald-500/30">
-                  ✋ 손바닥을 1.2초 펴거나 [다음 문제] 버튼을 누르세요
-                </span>
+                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 text-emerald-300 backdrop-blur-md border border-emerald-500/40 text-xs shadow-lg animate-pulse">
+                  <MoveRight className="w-4 h-4 text-emerald-400" />
+                  <span className="font-semibold">손을 옆으로 휙 넘기거나 (스와이프 💨) 엄지척(👍) 하세요</span>
+                </div>
+              </div>
+            )}
+
+            {/* Dynamic Motion Notice Popup */}
+            {motionNotice && (
+              <div className="absolute inset-0 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs pointer-events-none z-20">
+                <div className="px-5 py-3 rounded-2xl bg-emerald-600 text-white font-extrabold text-sm md:text-base shadow-2xl flex items-center gap-2 border border-emerald-400">
+                  <Sparkles className="w-5 h-5 text-amber-300" />
+                  <span>{motionNotice}</span>
+                </div>
               </div>
             )}
           </>
@@ -515,7 +667,7 @@ export const CameraView: React.FC<CameraViewProps> = ({
           </button>
         </div>
 
-        {/* Privacy & Safety Note (Required by User Prompt) */}
+        {/* Privacy & Safety Note */}
         <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/60 dark:border-emerald-800/40 text-emerald-800 dark:text-emerald-300 text-xs">
           <ShieldCheck className="w-4 h-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           <p className="leading-tight">

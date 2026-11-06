@@ -26,15 +26,17 @@ export default function App() {
   const [isHelpOpen, setIsHelpOpen] = useState<boolean>(false);
 
   const questionStartTimeRef = useRef<number>(Date.now());
+  const isSubmittingRef = useRef<boolean>(false);
   const currentQuestion = QUIZ_QUESTIONS[currentQuestionIndex];
   const currentUserAnswer = userAnswers.find((a) => a.questionId === currentQuestion?.id) || null;
 
   // Track live score
   const score = userAnswers.filter((a) => a.isCorrect).length * 10;
 
-  // Reset timer on question change
+  // Reset timer & submission lock on question change
   useEffect(() => {
     questionStartTimeRef.current = Date.now();
+    isSubmittingRef.current = false;
     setActiveGestureChoice(null);
     setGestureProgress(0);
   }, [currentQuestionIndex]);
@@ -42,7 +44,9 @@ export default function App() {
   // Handle answer selection (via gesture or mouse click)
   const handleSelectOption = useCallback(
     (optionNumber: 1 | 2 | 3 | 4, method: 'gesture' | 'click') => {
-      if (currentUserAnswer) return; // Already answered
+      // Prevent duplicate submission strictly!
+      if (currentUserAnswer !== null || isSubmittingRef.current) return;
+      isSubmittingRef.current = true;
 
       const timeTakenSec = Math.max(0.5, (Date.now() - questionStartTimeRef.current) / 1000);
       const isCorrect = optionNumber === currentQuestion.correctIndex;
@@ -96,6 +100,7 @@ export default function App() {
     setUserAnswers([]);
     setCurrentQuestionIndex(0);
     setIsQuizFinished(false);
+    isSubmittingRef.current = false;
     questionStartTimeRef.current = Date.now();
   }, []);
 

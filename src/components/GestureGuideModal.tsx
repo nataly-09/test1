@@ -56,15 +56,27 @@ export const GestureGuideModal: React.FC<GestureGuideModalProps> = ({ isOpen, on
           <div className="space-y-2 pt-2">
             <div className="flex items-start gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>1.5초 유지 확정:</strong> 원하는 번호의 손가락 개수를 들고 1.5초간 유지하면 자동으로 해당 보기가 확정됩니다.</span>
+              <span><strong>1.5초 유지 확정 & 즉시 리셋:</strong> 손가락 개수를 1.5초간 유지하면 답안이 자동 확정되며, 유지 도중 손을 내리거나 화면을 벗어나면 타이머가 즉시 0초로 초기화됩니다.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              <span><strong>회전 방향 & 엄지 특화 판정:</strong> 손이 좌우로 기울어져 있어도 손 축과 엄지 벡터를 자동 보정하며, 프레임 안정화 필터로 떨림 없이 정확하게 인식합니다.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              <span><strong>다음 문제 모션 이동:</strong> 정답 확인 후 책장을 넘기듯 손을 옆으로 휙 넘기거나(스와이프 💨), 엄지 척(👍)을 하면 다음 문제로 즉각 넘어갑니다.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+              <span><strong>제출 후 중복 방지:</strong> 문제를 푼 직후에는 추가 선택이 잠기므로 안심하고 손을 내리실 수 있습니다.</span>
             </div>
             <div className="flex items-start gap-2">
               <MousePointer className="w-4 h-4 text-sky-500 shrink-0 mt-0.5" />
-              <span><strong>마우스 클릭 대체:</strong> 카메라 인식이 불편하거나 조명이 어두우면 보기를 직접 클릭하여 언제든지 정답을 고를 수 있습니다.</span>
+              <span><strong>마우스 클릭 대체:</strong> 보기를 직접 마우스나 터치로 클릭하여 풀 수도 있습니다.</span>
             </div>
             <div className="flex items-start gap-2">
               <ShieldCheck className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
-              <span><strong>브라우저 온디바이스 처리:</strong> 웹캠 영상은 어떠한 외부 서버로도 전송되지 않으며, 사용자 PC/모바일 브라우저 내에서만 안전하게 실시간 계산됩니다.</span>
+              <span><strong>브라우저 온디바이스 처리:</strong> 웹캠 영상은 외부 서버로 전송되지 않고 브라우저 내부에서만 실시간 분석됩니다.</span>
             </div>
           </div>
         </div>
